@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>스택 동작 시각화 연습 도구</title>
+<style>
+  :root{
+    --paper:#EEF1F5;
+    --grid:rgba(27,42,74,.055);
+    --ink:#1B2A4A;
+    --ink-soft:#5A6B85;
+    --line:#C4CFDE;
+    --card:#FFFFFF;
+    --block:#FFFFFF;
+    --block-edge:#B4C1D6;
+    --top:#E28A2B;
+    --top-soft:#FBEBD6;
+    --pop:#376E82;
+    --pop-soft:#E1EDF1;
+    --no:#C8443F;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;font-family:var(--sans);color:var(--ink);
+    background-color:var(--paper);
+    background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+    background-size:28px 28px;
+    padding:24px 18px 48px;line-height:1.5;
+  }
+  .wrap{max-width:1200px;margin:0 auto}
+  .kicker{font:600 11px/1 var(--sans);letter-spacing:.18em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:8px}
+  h1{font-size:28px;letter-spacing:-.01em;margin:0 0 4px}
+  .sub{color:var(--ink-soft);font-size:14px;margin:0 0 20px}
+
+  /* 왼쪽=C 구현, 오른쪽=시각화 도구 */
+  .layout{display:grid;grid-template-columns:minmax(0,460px) minmax(0,1fr);gap:18px;align-items:start}
+  .tool-pane{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start}
+
+  /* 코드 창 */
+  .code-pane{background:#12203B;border:1px solid #223252;border-radius:14px;padding:16px 16px 18px;position:sticky;top:16px}
+  .code-pane h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#9DB0D0;margin:0 0 4px}
+  .code-cap{font-size:12px;color:#7E90B2;margin:0 0 12px}
+  .code{font:600 13.5px/1.75 var(--mono);color:#DCE6F5;counter-reset:ln;white-space:pre;overflow-x:auto}
+  .cline{display:block;position:relative;padding-left:34px;border-radius:5px}
+  .cline::before{counter-increment:ln;content:counter(ln);position:absolute;left:0;width:24px;text-align:right;color:#4C6089;font-weight:400}
+  .cline.exec{background:rgba(226,138,43,.22);box-shadow:inset 3px 0 0 var(--top)}
+  .code .cm{color:#6E86AE;font-weight:400}       /* 주석 */
+  .code .kw{color:#E28A2B}                        /* 키워드 */
+  .code .tp{color:#5FD0A8;font-weight:700}        /* top 강조 */
+  .code-foot{margin-top:14px;font-size:11.5px;color:#7E90B2;line-height:1.6}
+  .cline.curline{background:rgba(95,208,168,.16);box-shadow:inset 3px 0 0 #5FD0A8}
+  .code-run{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid #223252}
+  .crun{font:700 13px var(--sans);border:0;border-radius:9px;padding:9px 14px;cursor:pointer}
+  .crun.play{background:#5FD0A8;color:#0B1728}
+  .crun.step{background:#223252;color:#DCE6F5}
+  .crun.reset{background:transparent;color:#9DB0D0;border:1px solid #2C3E63}
+  .crun:hover{filter:brightness(1.06)}
+  .crun:disabled{opacity:.4;cursor:not-allowed;filter:none}
+  .speed-row{display:flex;align-items:center;gap:8px;margin-top:12px;font:600 12px var(--sans);color:#9DB0D0}
+  .speed-row label{margin-right:2px;white-space:nowrap}
+  .speed-row input[type=range]{flex:1;min-width:80px;accent-color:#5FD0A8;cursor:pointer}
+  .sp-end{font-size:11px;color:#7E90B2;white-space:nowrap}
+
+  /* 스택 */
+  .stack-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .stack-card h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 14px}
+  .stack-outer{display:flex;align-items:stretch}
+  .stack-col{flex:1;min-width:0}
+  .stack-frame{
+    display:flex;flex-direction:column-reverse;gap:8px;
+    min-height:360px;max-height:460px;overflow-y:auto;
+    padding:12px 12px 0;margin:0 0 0 24px;
+    border-left:3px solid var(--line);border-right:3px solid var(--line);border-bottom:5px solid var(--ink);
+    border-radius:0 0 8px 8px;
+  }
+  .floor{text-align:center;font-size:11px;color:var(--ink-soft);letter-spacing:.14em;margin:6px 0 0 24px}
+  /* 포인터 전용 칸: 블록 오른쪽에 분리되어 있어 숫자가 포인터를 가리지 않음 */
+  .pointer-gutter{position:relative;flex:0 0 104px;width:104px}
+  .block{
+    position:relative;height:56px;flex:0 0 auto;border-radius:9px;background:var(--block);
+    border:2px solid var(--block-edge);display:flex;align-items:center;justify-content:center;
+    font:800 26px var(--mono);color:var(--ink);box-shadow:0 2px 0 rgba(27,42,74,.08);
+  }
+  .block.top{border-color:var(--top);box-shadow:0 0 0 4px var(--top-soft)}
+  .block .idx-label{
+    position:absolute;left:10px;top:50%;transform:translateY(-50%);
+    font:700 13px var(--mono);color:var(--ink-soft);
+  }
+  /* 실시간 top 위치 포인터: 현재 top 블록(또는 빈 스택이면 바닥 아래)으로 이동 */
+  .top-pointer{
+    position:absolute;left:2px;height:56px;display:flex;align-items:center;gap:5px;
+    font:800 15px var(--mono);letter-spacing:.02em;color:var(--top);white-space:nowrap;
+    pointer-events:none;
+    transition:top .24s cubic-bezier(.34,1.2,.5,1),color .18s ease;
+  }
+  .top-pointer .arrow{font-size:18px;line-height:1;transform:translateY(-1px)}
+  .top-pointer.empty{color:var(--ink-soft)}
+  @media (prefers-reduced-motion:reduce){.top-pointer{transition:color .18s ease}}
+  .empty-note{margin:auto;color:var(--ink-soft);font-size:14px;padding:20px 0}
+  @keyframes drop{from{opacity:0;transform:translateY(-22px) scale(.96)}to{opacity:1;transform:none}}
+  @keyframes lift{to{opacity:0;transform:translateY(-24px) scale(.96)}}
+  .block.enter{animation:drop .24s ease-out}
+  .block.leaving{animation:lift .24s ease-in forwards}
+  @media (prefers-reduced-motion:reduce){.block.enter,.block.leaving{animation:none}.block.leaving{opacity:0}}
+
+  /* 컨트롤 */
+  .panel{display:flex;flex-direction:column;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .card h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 12px}
+
+  .in-row{display:flex;gap:8px}
+  #numInput{
+    flex:1;font:700 20px var(--mono);padding:11px 14px;border:2px solid var(--line);border-radius:10px;color:var(--ink);
+  }
+  #numInput:focus-visible{outline:2px solid var(--top);outline-offset:1px;border-color:var(--top)}
+  .in-hint{font-size:12px;color:var(--ink-soft);margin-top:8px}
+
+  .btn-row{display:flex;gap:10px;margin-top:14px}
+  .btn{font:700 16px var(--sans);border:0;border-radius:10px;padding:13px 18px;cursor:pointer;flex:1}
+  .btn.push{background:var(--top);color:#fff}
+  .btn.push:hover{filter:brightness(.96)}
+  .btn.pop{background:#fff;color:var(--pop);border:2px solid var(--pop)}
+  .btn.pop:hover{background:var(--pop-soft)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.ghost{background:transparent;color:var(--ink-soft);border:1px solid var(--line);font-size:13px;padding:9px 14px;flex:0 0 auto}
+
+  /* 읽을 값 (현재 읽는 값 강조) */
+  .reading{display:flex;flex-wrap:wrap;gap:7px;min-height:40px;align-items:center}
+  .rtok{
+    font:700 17px var(--mono);padding:7px 12px;border-radius:8px;background:#F3F5F9;border:1.5px solid var(--line);color:var(--ink-soft);
+  }
+  .rtok.read{background:#fff;color:var(--ink);opacity:.5;text-decoration:line-through}
+  .rtok.now{
+    background:var(--top-soft);border-color:var(--top);color:#8a5212;transform:scale(1.06);
+    box-shadow:0 0 0 3px rgba(226,138,43,.18);
+  }
+  .rtok.now::before{content:"읽는 중 ▸ ";font-size:11px;font-weight:800}
+  .reading-empty{font-size:13px;color:var(--ink-soft)}
+
+  /* 읽어들이기 표시 */
+  .readouts{display:flex;gap:12px}
+  .readout{flex:1;border:1.5px solid var(--line);border-radius:11px;padding:12px;text-align:center}
+  .readout .rlabel{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft);font-weight:700;margin-bottom:6px}
+  .readout .rval{font:800 30px var(--mono);color:var(--ink)}
+  .readout.top-r{border-color:var(--top);background:var(--top-soft)}
+  .readout.top-r .rval{color:#8a5212}
+  .readout.pop-r{border-color:var(--pop);background:var(--pop-soft)}
+  .readout.pop-r .rval{color:var(--pop)}
+  .readout.pulse{animation:pulse .4s ease}
+  @keyframes pulse{0%{transform:scale(1)}40%{transform:scale(1.07)}100%{transform:scale(1)}}
+
+  .history{margin-top:12px}
+  .history .hlabel{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft);font-weight:700;margin-bottom:6px}
+  .hchips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+  .hchip{font:700 14px var(--mono);background:var(--pop);color:#fff;border-radius:7px;padding:4px 10px}
+
+  .msg{font-size:13px;font-weight:600;min-height:20px;margin-top:4px}
+  .msg.no{color:var(--no)}
+  .msg.info{color:var(--ink-soft)}
+
+  @media (max-width:1080px){.layout{grid-template-columns:1fr}.code-pane{position:static}}
+  @media (max-width:760px){.tool-pane{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">자료구조와 알고리즘 · 수업 중 시연·연습</div>
+  <h1>스택 동작 시각화 연습 도구</h1>
+  <p class="sub">숫자를 입력해 push 하고, pop 버튼으로 꺼낸다. 스택의 맨 위(top)는 항상 강조되어 보인다.</p>
+
+  <div class="layout">
+    <!-- 왼쪽: 스택의 C 구현 -->
+    <section class="code-pane">
+      <h2>스택의 C 구현</h2>
+      <p class="code-cap">배열 기반 · 오른쪽 도구와 같은 규칙 (top 초기값 −1)</p>
+      <div class="code" aria-label="스택 C 구현 코드"><span class="cline"><span class="cm">/* 배열 기반 스택 */</span></span><span class="cline"><span class="kw">int</span> stack[MAX];        <span class="cm">/* 값 저장 배열 */</span></span><span class="cline"><span class="kw">int</span> <span class="tp">top</span> = -1;         <span class="cm">/* 비어 있으면 top = -1 */</span></span><span class="cline"> </span><span class="cline" id="L-empty"><span class="kw">int</span> is_empty(<span class="kw">void</span>) { <span class="kw">return</span> <span class="tp">top</span> == -1; }</span><span class="cline"><span class="kw">int</span> is_full(<span class="kw">void</span>)  { <span class="kw">return</span> <span class="tp">top</span> == MAX-1; }</span><span class="cline"> </span><span class="cline"><span class="cm">/* push: top을 올리고 그 자리에 저장 */</span></span><span class="cline" id="P-head"><span class="kw">void</span> push(<span class="kw">int</span> x) {</span><span class="cline" id="P-full">    <span class="kw">if</span> (is_full()) <span class="kw">return</span>;   <span class="cm">/* overflow */</span></span><span class="cline" id="L-push">    stack[++<span class="tp">top</span>] = x;      <span class="cm">/* top: 0,1,2,... */</span></span><span class="cline">}</span><span class="cline"> </span><span class="cline"><span class="cm">/* pop: top 값을 꺼내고 top을 내림 */</span></span><span class="cline" id="Q-head"><span class="kw">int</span> pop(<span class="kw">void</span>) {</span><span class="cline" id="L-underflow">    <span class="kw">if</span> (is_empty()) <span class="kw">return</span> -1; <span class="cm">/* underflow */</span></span><span class="cline" id="L-pop">    <span class="kw">return</span> stack[<span class="tp">top</span>--];   <span class="cm">/* 반환 후 감소 */</span></span><span class="cline">}</span><span class="cline"> </span><span class="cline"><span class="cm">/* 아래 순서대로 실행된다 */</span></span><span class="cline"><span class="kw">int</span> main(<span class="kw">void</span>) {</span><span class="cline" id="m0">    push(2);</span><span class="cline" id="m1">    push(7);</span><span class="cline" id="m2">    pop();</span><span class="cline" id="m3">    push(5);</span><span class="cline" id="m4">    push(1);</span><span class="cline" id="m5">    pop();</span><span class="cline" id="m6">    pop();</span><span class="cline" id="m-return">    <span class="kw">return</span> 0;</span><span class="cline">}</span></div>
+      <div class="code-run">
+        <button class="crun play" id="runBtn">▶ main 실행</button>
+        <button class="crun step" id="stepBtn">⏭ 다음 줄</button>
+        <button class="crun reset" id="resetRunBtn">↺ 리셋</button>
+      </div>
+      <div class="speed-row">
+        <label for="speed">실행 속도</label>
+        <span class="sp-end">느리게</span>
+        <input type="range" id="speed" min="1" max="10" value="7" step="1" aria-label="자동 실행 속도">
+        <span class="sp-end">빠르게</span>
+      </div>
+      <p class="code-foot">‘main 실행’은 위 시나리오대로 오른쪽 스택을 자동으로 움직입니다. ‘다음 줄’로 한 줄씩 짚어가며 볼 수도 있습니다. 실행 중인 main 줄은 초록, 해당 push/pop 구현 줄은 주황으로 강조됩니다.</p>
+    </section>
+
+    <!-- 오른쪽: 시각화 도구 -->
+    <div class="tool-pane">
+      <!-- 스택 그림 -->
+      <section class="stack-card">
+        <h2>스택 (배열)</h2>
+        <div class="stack-outer">
+          <div class="stack-col">
+            <div class="stack-frame" id="stackFrame" aria-label="스택"></div>
+            <div class="floor" id="floor">바닥 (bottom)</div>
+          </div>
+          <div class="pointer-gutter" id="ptrGutter">
+            <div class="top-pointer empty" id="topPointer" aria-hidden="true"><span class="arrow">◀</span> top = -1</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 컨트롤 + 표시 -->
+      <div class="panel">
+        <section class="card">
+          <h2>숫자 입력</h2>
+          <div class="in-row">
+            <input id="numInput" type="text" inputmode="numeric" autocomplete="off"
+                   placeholder="예: 7  또는  2 7 5 1" aria-label="숫자 입력">
+          </div>
+          <p class="in-hint">한 개만 넣어도 되고, 공백으로 여러 개를 넣으면 왼쪽부터 하나씩 읽어 쌓는다.</p>
+          <div class="btn-row">
+            <button class="btn push" id="pushBtn">push ▸</button>
+            <button class="btn pop" id="popBtn">pop</button>
+            <button class="btn ghost" id="clearBtn">비우기</button>
+          </div>
+          <div class="msg info" id="msg"></div>
+        </section>
+
+        <section class="card">
+          <h2>읽을 값 <span style="font-weight:400;text-transform:none;letter-spacing:0">— 현재 읽는 값 강조</span></h2>
+          <div class="reading" id="reading"></div>
+        </section>
+
+        <section class="card">
+          <div class="readouts">
+            <div class="readout pop-r" id="popReadout">
+              <div class="rlabel">방금 꺼낸 값</div>
+              <div class="rval" id="popVal">—</div>
+            </div>
+          </div>
+          <div class="history">
+            <div class="hlabel">꺼낸 값 기록</div>
+            <div class="hchips" id="history"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var $ = function(id){ return document.getElementById(id); };
+
+  var stack = [];        // [{v, id}]
+  var tokens = [];       // 읽을 값들
+  var readPos = 0;       // 다음에 읽을 위치 (현재 강조)
+  var poppedHistory = [];
+  var lastPopped = null;
+  var nextId = 1;
+  var busy = false;
+
+  // main() 시나리오 — 왼쪽 코드의 main과 1:1로 대응
+  var mainScenario = [
+    {op:"push", value:2, line:"m0"},
+    {op:"push", value:7, line:"m1"},
+    {op:"pop",            line:"m2"},
+    {op:"push", value:5, line:"m3"},
+    {op:"push", value:1, line:"m4"},
+    {op:"pop",            line:"m5"},
+    {op:"pop",            line:"m6"}
+  ];
+  var program = [];        // 줄 단위 마이크로 스텝
+  var pc = 0;              // 다음 실행할 줄
+  var autoPlaying = false; // 자동 실행 중
+  var stepping = false;    // 한 줄 실행 처리 중
+
+  function setMsg(kind, text){
+    var m = $("msg");
+    m.className = "msg " + (kind||"info");
+    m.textContent = text || "";
+  }
+
+  // ---- 입력 파싱 ----
+  function parseInput(raw){
+    if(!raw) return [];
+    return raw.split(/[\s,]+/).filter(function(s){return s.length;})
+      .map(function(s){ return parseInt(s,10); })
+      .filter(function(n){ return !isNaN(n); });
+  }
+
+  // ---- push ----
+  function pushValue(v){
+    var b = { v:v, id:nextId++ };
+    stack.push(b);
+    renderStack(b.id, null);
+    renderReadouts();
+    return b.id;
+  }
+
+  function onPush(){
+    if(busy || autoPlaying || stepping) return;
+    clearMainState();
+    // 1) 아직 읽지 않은 토큰이 있으면 그것부터 읽는다
+    if(readPos < tokens.length){
+      var v = tokens[readPos];
+      readPos++;
+      pushValue(v);
+      renderReading();
+      flashLine("L-push");
+      setMsg("info", "push(" + v + ") 실행 — top = " + (stack.length-1) + " (값 " + v + ")");
+      if(readPos >= tokens.length){ /* 다 읽음 */ }
+      return;
+    }
+    // 2) 입력 필드를 새로 파싱
+    var parsed = parseInput($("numInput").value);
+    if(parsed.length === 0){
+      setMsg("no", "먼저 숫자를 입력하세요. (여러 개는 공백으로 구분)");
+      $("numInput").focus();
+      return;
+    }
+    tokens = parsed;
+    readPos = 0;
+    $("numInput").value = "";
+    var first = tokens[readPos];
+    readPos++;
+    pushValue(first);
+    renderReading();
+    flashLine("L-push");
+    setMsg("info", "push(" + first + ") 실행 — top = " + (stack.length-1) + " (값 " + first + ")");
+  }
+
+  // ---- pop ----
+  function animatedPop(done){
+    busy = true;
+    var top = stack[stack.length-1];
+    var el = $("stackFrame").querySelector('[data-id="'+top.id+'"]');
+    if(el) el.classList.add("leaving");
+    flashLine("L-pop");
+    setMsg("info", "pop() 실행 — top " + top.v + " 를 꺼냅니다.");
+    setTimeout(function(){
+      stack.pop();
+      lastPopped = top.v;
+      poppedHistory.push(top.v);
+      busy = false;
+      renderStack(null, null);
+      renderReadouts(true);
+      renderHistory();
+      setMsg("info", "pop() 실행 — " + top.v + " 를 꺼냈습니다. top = " + (stack.length-1) + (stack.length===0 ? " (비어 있음)" : ""));
+      if(done) done();
+    }, 240);
+  }
+
+  function onPop(){
+    if(busy || autoPlaying || stepping) return;
+    clearMainState();
+    if(stack.length === 0){
+      setMsg("no", "스택이 비어 있어 꺼낼 값이 없습니다 (underflow).");
+      flashLine("L-underflow");
+      flash($("popReadout"));
+      return;
+    }
+    animatedPop(null);
+  }
+
+  function onClear(){
+    if(busy || autoPlaying || stepping) return;
+    stack = []; tokens = []; readPos = 0; poppedHistory = []; lastPopped = null;
+    $("numInput").value = "";
+    setMsg("info", "스택과 입력을 모두 비웠습니다.");
+    renderAll();
+    clearMainState();
+    $("numInput").focus();
+  }
+
+  function flash(node){ node.classList.remove("pulse"); void node.offsetWidth; node.classList.add("pulse"); }
+
+  // 실행된 연산에 해당하는 C 코드 줄 강조
+  function flashLine(id){
+    var el = $(id); if(!el) return;
+    el.classList.remove("exec"); void el.offsetWidth; el.classList.add("exec");
+    setTimeout(function(){ el.classList.remove("exec"); }, 900);
+  }
+
+  // ---- 렌더 ----
+  function renderStack(enterId){
+    var frame = $("stackFrame");
+    frame.innerHTML = "";
+    if(stack.length === 0){
+      var n = document.createElement("div");
+      n.className = "empty-note"; n.textContent = "스택이 비어 있습니다 (top = -1)";
+      frame.appendChild(n);
+      positionPointer();
+      return;
+    }
+    stack.forEach(function(b, idx){
+      var isTop = idx === stack.length-1;
+      var el = document.createElement("div");
+      el.className = "block" + (isTop ? " top" : "");
+      el.dataset.id = b.id;
+      var lab = document.createElement("span");
+      lab.className = "idx-label"; lab.textContent = "[" + idx + "]";
+      el.appendChild(lab);
+      el.appendChild(document.createTextNode(b.v));
+      if(enterId && b.id === enterId) el.classList.add("enter");
+      frame.appendChild(el);
+    });
+    if(enterId) frame.scrollTop = frame.scrollHeight;
+    positionPointer();
+  }
+
+  // top 포인터를 오른쪽 거터에서 실시간 이동 (인덱스 함께 표시)
+  // - 값이 있으면 top 블록 옆
+  // - 비어 있으면 top = -1 로 바닥선 아래에 표시
+  function positionPointer(){
+    var frame = $("stackFrame");
+    var gutter = $("ptrGutter");
+    var ptr = $("topPointer");
+    var gRect = gutter.getBoundingClientRect();
+    var topEl = frame.querySelector(".block.top");
+    if(!topEl){
+      // 빈 스택: 바닥선 바로 아래에 top = -1 표시
+      ptr.className = "top-pointer empty";
+      ptr.innerHTML = '<span class="arrow">◀</span> top = -1';
+      var frRect = frame.getBoundingClientRect();
+      ptr.style.top = (frRect.bottom - gRect.top - 24) + "px";
+      return;
+    }
+    ptr.className = "top-pointer";
+    ptr.innerHTML = '<span class="arrow">◀</span> top = ' + (stack.length - 1);
+    var bRect = topEl.getBoundingClientRect();
+    ptr.style.top = (bRect.top - gRect.top) + "px";
+  }
+
+  function renderReadouts(pulsePop){
+    $("popVal").textContent = (lastPopped === null) ? "—" : lastPopped;
+    if(pulsePop) flash($("popReadout"));
+  }
+
+  function renderReading(){
+    var box = $("reading"); box.innerHTML = "";
+    if(tokens.length === 0){
+      var e = document.createElement("span");
+      e.className = "reading-empty";
+      e.textContent = "입력한 값이 여기에 표시됩니다. push 하면 왼쪽부터 하나씩 읽습니다.";
+      box.appendChild(e);
+      return;
+    }
+    tokens.forEach(function(v, idx){
+      var t = document.createElement("span");
+      var cls = "rtok";
+      if(idx < readPos) cls += " read";
+      else if(idx === readPos) cls += " now";
+      t.className = cls;
+      t.textContent = v;
+      box.appendChild(t);
+    });
+    if(readPos >= tokens.length){
+      var done = document.createElement("span");
+      done.className = "reading-empty";
+      done.textContent = "  · 모두 읽음 (새 숫자를 입력하세요)";
+      box.appendChild(done);
+    }
+  }
+
+  function renderHistory(){
+    var h = $("history"); h.innerHTML = "";
+    poppedHistory.forEach(function(v){
+      var c = document.createElement("span"); c.className = "hchip"; c.textContent = v; h.appendChild(c);
+    });
+  }
+
+  function renderAll(){ renderStack(null); renderReadouts(); renderReading(); renderHistory(); }
+
+  // ---- main() 시나리오 실행 ----
+  function setCurrentLine(id){
+    var prev = document.querySelector(".cline.curline");
+    if(prev) prev.classList.remove("curline");
+    if(id){ var el = $(id); if(el) el.classList.add("curline"); }
+  }
+
+  function updateRunButtons(){
+    var locked = autoPlaying || stepping;
+    $("runBtn").disabled = locked;
+    $("stepBtn").disabled = locked || busy;
+    $("resetRunBtn").disabled = locked;
+    // 자동/단계 실행 중에는 수동 조작 잠금
+    $("pushBtn").disabled = locked;
+    $("popBtn").disabled = locked;
+    $("clearBtn").disabled = locked;
+    $("numInput").disabled = locked;
+  }
+
+  // 수동 조작 시 main 진행 표시 초기화
+  function clearMainState(){ pc = 0; setCurrentLine(null); updateRunButtons(); }
+
+  // 시나리오를 '줄 단위' 마이크로 스텝으로 펼친다
+  function buildProgram(){
+    program = [];
+    mainScenario.forEach(function(s){
+      if(s.op === "push"){
+        program.push({line:s.line,       msg:"main: push(" + s.value + ") 호출"});
+        program.push({line:"P-head",     msg:"제어가 push() 함수로 이동 (x = " + s.value + ")"});
+        program.push({line:"P-full",     msg:"가득 찼는지 검사 (is_full)"});
+        program.push({line:"L-push",     msg:"stack[++top] = " + s.value, push:s.value, flash:"L-push"});
+        program.push({line:s.line,       msg:"push() 종료 → main으로 복귀"});
+      } else {
+        program.push({line:s.line,       msg:"main: pop() 호출"});
+        program.push({line:"Q-head",     msg:"제어가 pop() 함수로 이동"});
+        program.push({line:"L-underflow",msg:"비었는지 검사 (is_empty)"});
+        program.push({line:"L-pop",      msg:"return stack[top--]", pop:true, flash:"L-pop"});
+        program.push({line:s.line,       msg:"pop() 종료 → main으로 복귀"});
+      }
+    });
+    program.push({line:"m-return", finish:true});
+  }
+
+  function resetForMain(){
+    stack = []; tokens = []; readPos = 0; poppedHistory = []; lastPopped = null;
+    buildProgram(); pc = 0;
+    $("numInput").value = "";
+    renderAll();
+    setCurrentLine(null);
+  }
+
+  var STEP = 400;   // 자동 실행 시 줄 간 간격(ms) — 속도 슬라이더로 조절
+
+  // 마이크로 스텝 1줄 실행. done은 그 줄 처리가 끝나면 호출
+  function runMicro(step, done){
+    setCurrentLine(step.line);
+    if(step.flash) flashLine(step.flash);
+    if(step.push !== undefined){
+      pushValue(step.push);
+      setMsg("info", step.msg + " → top = " + (stack.length-1));
+      if(done) done();
+    } else if(step.pop){
+      if(stack.length === 0){
+        flashLine("L-underflow");
+        setMsg("no", "pop() — 비어 있어 꺼낼 값이 없습니다 (underflow).");
+        if(done) done();
+      } else {
+        setMsg("info", step.msg);
+        animatedPop(function(){
+          setMsg("info", step.msg + " → top = " + (stack.length-1) + (stack.length===0 ? " (비어 있음)" : ""));
+          if(done) done();
+        });
+      }
+    } else if(step.finish){
+      setMsg("info", "main() 종료 — 최종 top = " + (stack.length-1) +
+        (poppedHistory.length ? " · 꺼낸 값 순서: " + poppedHistory.join(", ") : ""));
+      if(done) done();
+    } else {
+      setMsg("info", step.msg);
+      if(done) done();
+    }
+  }
+
+  function onRunMain(){
+    if(autoPlaying || busy || stepping) return;
+    resetForMain();
+    autoPlaying = true;
+    updateRunButtons();
+    var tick = function(){
+      if(!autoPlaying) return;
+      if(pc >= program.length){ autoPlaying = false; updateRunButtons(); return; }
+      var step = program[pc]; pc++;
+      runMicro(step, function(){ setTimeout(tick, STEP); });
+    };
+    tick();
+  }
+
+  // ⏭ 다음 줄: 함수 안에서도 딱 한 줄만 진행하고 멈춘다
+  function onStepMain(){
+    if(autoPlaying || busy || stepping) return;
+    if(pc === 0){ resetForMain(); }          // 처음이면 깨끗한 상태에서 시작
+    if(pc >= program.length){ return; }       // 이미 끝
+    stepping = true;
+    updateRunButtons();
+    var step = program[pc]; pc++;
+    runMicro(step, function(){
+      stepping = false;
+      updateRunButtons();
+    });
+  }
+
+  function onResetRun(){
+    if(autoPlaying || busy || stepping) return;
+    resetForMain();
+    setMsg("info", "리셋 — ‘다음 줄’ 또는 ‘main 실행’으로 시작하세요.");
+    updateRunButtons();
+  }
+
+  // ---- 배선 ----
+  $("pushBtn").addEventListener("click", onPush);
+  $("popBtn").addEventListener("click", onPop);
+  $("clearBtn").addEventListener("click", onClear);
+  $("runBtn").addEventListener("click", onRunMain);
+  $("stepBtn").addEventListener("click", onStepMain);
+  $("resetRunBtn").addEventListener("click", onResetRun);
+  $("speed").addEventListener("input", function(){
+    // 값 1(느리게)~10(빠르게) → STEP 1000~100ms
+    STEP = 1100 - parseInt(this.value, 10) * 100;
+  });
+  $("numInput").addEventListener("keydown", function(e){
+    if(e.key === "Enter"){ e.preventDefault(); onPush(); }
+  });
+  $("numInput").addEventListener("input", function(){
+    // 새 입력을 시작하면 이전 토큰 큐는 초기화(직관적)
+    if(tokens.length && readPos >= tokens.length){ tokens = []; readPos = 0; renderReading(); }
+  });
+
+  buildProgram();
+  STEP = 1100 - parseInt($("speed").value, 10) * 100;
+  renderAll();
+  updateRunButtons();
+  $("numInput").focus();
+})();
+</script>
+</body>
+</html>
